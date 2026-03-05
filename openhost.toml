@@ -1,0 +1,21 @@
+[app]
+name = "plane"
+version = "0.1.0"
+description = "Plane.so project management - all-in-one container with bundled Postgres, Redis, RabbitMQ, and MinIO"
+
+[runtime]
+type = "serverfull"
+
+[runtime.container]
+image = "Dockerfile"
+port = 8080
+
+[routing]
+base_path = "/plane"
+
+[resources]
+memory_mb = 2048
+cpu_millicores = 2000
+
+[data]
+app_data = true

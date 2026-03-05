@@ -1,0 +1,36 @@
+{
+    auto_https off
+    servers {
+        max_header_size 25MB
+    }
+}
+
+:8080 {
+    request_body {
+        max_size {$FILE_SIZE_LIMIT:5242880}
+    }
+
+    handle /spaces/* {
+        reverse_proxy localhost:3002
+    }
+
+    handle /live/* {
+        reverse_proxy localhost:3005
+    }
+
+    handle /api/* {
+        reverse_proxy localhost:3004
+    }
+
+    handle /auth/* {
+        reverse_proxy localhost:3004
+    }
+
+    handle /god-mode/* {
+        reverse_proxy localhost:3003
+    }
+
+    handle /* {
+        reverse_proxy localhost:3001
+    }
+}
