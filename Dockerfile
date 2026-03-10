@@ -56,8 +56,8 @@ COPY --from=backend-img /code /app/backend
 COPY --from=backend-img /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
 COPY --from=backend-img /usr/local/bin /usr/local/bin
 
-# Install supervisor
-RUN pip install --no-cache-dir supervisor
+# Install supervisor + OpenHost auth proxy deps
+RUN pip install --no-cache-dir supervisor flask PyJWT requests psycopg2-binary cryptography
 
 # Install MinIO server binary
 RUN ARCH=$(uname -m) && \
@@ -72,6 +72,7 @@ COPY Caddyfile /app/proxy/Caddyfile
 COPY supervisor.conf /app/supervisor.conf
 COPY start.sh /app/start.sh
 COPY plane.env /app/plane.env
+COPY openhost_auth.py /app/openhost_auth.py
 
 # Directories and permissions
 RUN mkdir -p /app/logs/access /app/logs/error \

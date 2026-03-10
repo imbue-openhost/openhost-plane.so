@@ -22,6 +22,11 @@
         reverse_proxy localhost:3004
     }
 
+    handle /openhost-auth/* {
+        uri strip_prefix /openhost-auth
+        reverse_proxy localhost:3006
+    }
+
     handle /auth/* {
         reverse_proxy localhost:3004
     }

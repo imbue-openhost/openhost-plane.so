@@ -32,8 +32,13 @@ fi
 mkdir -p "$MINIO_DATA/$MINIO_BUCKET"
 
 # --- Derive domain from environment ---
-# OPENHOST_APP_BASE_PATH is set by the router (e.g. "/plane")
-DOMAIN_NAME="${DOMAIN_NAME:-localhost}"
+# OPENHOST_ZONE_DOMAIN is set by the router (e.g. "zack.host.imbue.com")
+# Plane is accessed at plane.{zone_domain} via subdomain routing
+if [ -n "$OPENHOST_ZONE_DOMAIN" ]; then
+    DOMAIN_NAME="${DOMAIN_NAME:-plane.${OPENHOST_ZONE_DOMAIN}}"
+else
+    DOMAIN_NAME="${DOMAIN_NAME:-localhost}"
+fi
 
 # Protocol: the router handles TLS, so internal is http
 APP_PROTOCOL="${APP_PROTOCOL:-http}"
