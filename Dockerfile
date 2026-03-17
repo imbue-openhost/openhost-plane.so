@@ -64,7 +64,7 @@ RUN ARCH=$(uname -m) && \
     if [ "$ARCH" = "x86_64" ]; then MINIO_ARCH="amd64"; \
     elif [ "$ARCH" = "aarch64" ]; then MINIO_ARCH="arm64"; \
     else MINIO_ARCH="amd64"; fi && \
-    wget -q "https://dl.min.io/server/minio/release/linux-${MINIO_ARCH}/minio" -O /usr/local/bin/minio && \
+    wget -q "https://dl.min.io/aistor/minio/release/linux-${MINIO_ARCH}/minio" -O /usr/local/bin/minio && \
     chmod +x /usr/local/bin/minio
 
 # Config files

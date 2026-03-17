@@ -41,6 +41,7 @@ ROUTER_URL = os.environ.get("OPENHOST_ROUTER_URL", "http://127.0.0.1:8080")
 # The external URL guests use to reach this Plane instance
 EXTERNAL_URL = os.environ.get("WEB_URL", f"http://{ZONE_DOMAIN}")
 DJANGO_SECRET_KEY = os.environ.get("SECRET_KEY", "")
+OWNER_EMAIL = "owner@openhost.local"
 
 # File to persist known guest identities (domain -> public_key_pem)
 GUESTS_FILE = "/app/data/openhost_guests.json"
@@ -62,6 +63,98 @@ def _save_guests(guests):
     os.makedirs(os.path.dirname(GUESTS_FILE), exist_ok=True)
     with open(GUESTS_FILE, "w") as f:
         json.dump(guests, f, indent=2)
+
+
+def _setup_instance():
+    """Auto-setup Plane instance on first boot: create admin user + mark done."""
+    instance = None
+    for _ in range(600):
+        try:
+            conn = _db()
+            cur = conn.cursor()
+            cur.execute("SELECT id, is_setup_done FROM instances LIMIT 1")
+            instance = cur.fetchone()
+            conn.close()
+            if instance:
+                break
+        except Exception:
+            pass
+        time.sleep(1)
+
+    if not instance:
+        log.error("Instance setup: timed out waiting for database")
+        return
+
+    if instance["is_setup_done"]:
+        log.info("Instance already set up, skipping auto-setup")
+        return
+
+    instance_id = instance["id"]
+    now = datetime.now(timezone.utc)
+    conn = _db()
+    try:
+        cur = conn.cursor()
+
+        # Create or find owner user
+        cur.execute("SELECT id FROM users WHERE email = %s", (OWNER_EMAIL,))
+        existing = cur.fetchone()
+        if existing:
+            user_id = existing["id"]
+        else:
+            user_id = uuid.uuid4()
+            cur.execute(
+                """INSERT INTO users (
+                    id, created_at, updated_at,
+                    password, last_login,
+                    is_superuser, username, first_name, last_name,
+                    email, is_staff, is_active, date_joined,
+                    is_managed, is_password_autoset, is_email_verified,
+                    is_password_expired, is_bot, display_name,
+                    avatar, is_email_valid,
+                    last_location, created_location, token,
+                    user_timezone, last_login_ip, last_logout_ip,
+                    last_login_medium, last_login_uagent
+                ) VALUES (
+                    %s, %s, %s,
+                    '', NULL,
+                    true, %s, 'Owner', '',
+                    %s, true, true, %s,
+                    false, true, true,
+                    false, false, 'Owner',
+                    '', true,
+                    '', '', '',
+                    'UTC', '', '',
+                    '', ''
+                )""",
+                (str(user_id), now, now, "owner", OWNER_EMAIL, now),
+            )
+
+        # Create instance admin
+        cur.execute(
+            "SELECT id FROM instance_admins WHERE user_id = %s",
+            (str(user_id),),
+        )
+        if not cur.fetchone():
+            cur.execute(
+                """INSERT INTO instance_admins
+                   (id, created_at, updated_at, role, is_verified, user_id, instance_id)
+                   VALUES (%s, %s, %s, 20, true, %s, %s)""",
+                (str(uuid.uuid4()), now, now, str(user_id), str(instance_id)),
+            )
+
+        # Mark instance setup as done
+        cur.execute(
+            "UPDATE instances SET is_setup_done = true, is_signup_screen_visited = true WHERE id = %s",
+            (str(instance_id),),
+        )
+
+        conn.commit()
+        log.info("Instance auto-setup complete: admin user %s", user_id)
+    except Exception as e:
+        log.error("Instance setup failed: %s", e)
+        conn.rollback()
+    finally:
+        conn.close()
 
 
 def _is_owner(req):
@@ -130,20 +223,24 @@ def _find_or_create_plane_user(domain):
                 is_superuser, username, first_name, last_name,
                 email, is_staff, is_active, date_joined,
                 is_managed, is_password_autoset, is_email_verified,
-                is_onboarded, is_bot, display_name,
-                avatar, use_case, is_password_expired,
-                is_tour_completed, onboarding_step
+                is_password_expired, is_bot, display_name,
+                avatar, is_email_valid,
+                last_location, created_location, token,
+                user_timezone, last_login_ip, last_logout_ip,
+                last_login_medium, last_login_uagent
             ) VALUES (
                 %s, %s, %s,
                 '', NULL,
                 false, %s, %s, '',
                 %s, false, true, %s,
                 false, true, true,
-                true, false, %s,
-                '', NULL, false,
-                true, '{"workspace_join": true, "profile_complete": true, "workspace_create": true, "workspace_invite": true}'::jsonb
+                false, false, %s,
+                '', true,
+                '', '', '',
+                'UTC', '', '',
+                '', ''
             )""",
-            (user_id, now, now, username, domain, email, now, domain),
+            (str(user_id), now, now, username, domain, email, now, domain),
         )
         conn.commit()
         log.info("Created Plane user %s for domain %s", user_id, domain)
@@ -348,6 +445,44 @@ def callback():
     return resp
 
 
+@app.route("/check-session")
+def check_session():
+    """Forward-auth endpoint: auto-login zone owner into Plane."""
+    # Fast path: already has a Plane session
+    if request.cookies.get("sessionid"):
+        return Response("ok", status=200)
+
+    # Check if this is the zone owner
+    if not _is_owner(request):
+        return Response("ok", status=200)
+
+    # Owner without session — create one
+    conn = _db()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT id FROM users WHERE email = %s", (OWNER_EMAIL,))
+        row = cur.fetchone()
+    finally:
+        conn.close()
+
+    if not row:
+        return Response("ok", status=200)
+
+    user_id = row["id"]
+    session_key, expire_date = _create_django_session(user_id)
+
+    # Redirect back to the original URL with the new session cookie
+    original_uri = request.headers.get("X-Forwarded-Uri", "/")
+    resp = redirect(original_uri)
+    resp.set_cookie(
+        "sessionid", session_key,
+        expires=expire_date, path="/",
+        httponly=True, samesite="Lax",
+    )
+    log.info("Auto-logged in zone owner")
+    return resp
+
+
 # ─── Templates ───
 
 MANAGE_TEMPLATE = """\
@@ -428,4 +563,5 @@ LOGIN_TEMPLATE = """\
 
 
 if __name__ == "__main__":
+    _setup_instance()
     app.run(host="0.0.0.0", port=3006)

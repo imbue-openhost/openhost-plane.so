@@ -36,6 +36,9 @@
     }
 
     handle /* {
+        forward_auth localhost:3006 {
+            uri /check-session
+        }
         reverse_proxy localhost:3001
     }
 }
