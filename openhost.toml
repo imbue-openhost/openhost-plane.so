@@ -3,9 +3,6 @@ name = "plane"
 version = "0.1.0"
 description = "Plane.so project management - all-in-one container with bundled Postgres, Redis, RabbitMQ, and MinIO"
 
-[runtime]
-type = "serverfull"
-
 [runtime.container]
 image = "Dockerfile"
 port = 8080
