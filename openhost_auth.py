@@ -13,7 +13,6 @@ Routes (served via Caddy at /openhost-auth/*):
 - GET  /callback        — receives signed identity_token, creates Plane session
 """
 
-import hashlib
 import json
 import logging
 import os
@@ -22,6 +21,9 @@ import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode, urlparse
+
+from django.conf import settings as django_settings
+django_settings.configure(SECRET_KEY="unused", USE_TZ=True)
 
 import jwt
 import psycopg2
@@ -249,33 +251,21 @@ def _create_django_session(user_id):
     session_key = secrets.token_hex(16)
     expire_date = datetime.now(timezone.utc) + timedelta(days=14)
 
-    # Django session data format: base64 encoded JSON with session hash
-    # The session stores _auth_user_id, _auth_user_backend, _auth_user_hash
+    # Use Django's signing module to create a properly encoded session
+    from django.core import signing
+
     session_data = {
         "_auth_user_id": str(user_id),
         "_auth_user_backend": "django.contrib.auth.backends.ModelBackend",
-        "_auth_user_hash": "",  # Django recomputes this
+        "_auth_user_hash": "",
     }
 
-    # Django session encoding: JSON payload signed with SECRET_KEY
-    # We'll use Django's actual session format
-    import base64
-    import hmac
-
-    payload_json = json.dumps(session_data)
-    payload_b64 = base64.b64encode(payload_json.encode()).decode()
-
-    # Django session format: hash:payload_b64
-    # The hash is HMAC-SHA256 of "django.contrib.sessions.backends.db" + payload
-    if DJANGO_SECRET_KEY:
-        salt = "django.contrib.sessions.backends.db"
-        key = hashlib.sha256(
-            (salt + DJANGO_SECRET_KEY).encode()
-        ).digest()
-        signature = hmac.new(key, payload_b64.encode(), hashlib.sha256).hexdigest()
-        encoded = f".{payload_b64}:{signature}"
-    else:
-        encoded = f".{payload_b64}:nosecret"
+    encoded = signing.dumps(
+        session_data,
+        key=DJANGO_SECRET_KEY,
+        salt="django.contrib.sessions.backends.db",
+        serializer=signing.JSONSerializer,
+    )
 
     conn = _db()
     try:
