@@ -48,9 +48,11 @@ mkdir -p "$MINIO_DATA/$MINIO_BUCKET"
 
 # --- Derive domain from environment ---
 # OPENHOST_ZONE_DOMAIN is set by the router (e.g. "zack.host.imbue.com")
-# Plane is accessed at plane.{zone_domain} via subdomain routing
+# OPENHOST_APP_NAME is set by the router (e.g. "plane2")
+# The app is accessed at {app_name}.{zone_domain} via subdomain routing
 if [ -n "$OPENHOST_ZONE_DOMAIN" ]; then
-    DOMAIN_NAME="${DOMAIN_NAME:-plane.${OPENHOST_ZONE_DOMAIN}}"
+    APP_SUBDOMAIN="${OPENHOST_APP_NAME:-plane}"
+    DOMAIN_NAME="${DOMAIN_NAME:-${APP_SUBDOMAIN}.${OPENHOST_ZONE_DOMAIN}}"
 else
     DOMAIN_NAME="${DOMAIN_NAME:-localhost}"
 fi
