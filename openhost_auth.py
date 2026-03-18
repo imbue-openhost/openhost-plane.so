@@ -196,9 +196,14 @@ def _find_or_create_plane_user(domain):
         cur = conn.cursor()
 
         # Check if user already exists
-        cur.execute("SELECT id FROM users WHERE email = %s", (email,))
+        cur.execute("SELECT id, is_active FROM users WHERE email = %s", (email,))
         row = cur.fetchone()
         if row:
+            if not row["is_active"]:
+                # Re-activate a previously removed user
+                cur.execute("UPDATE users SET is_active = true WHERE id = %s", (str(row["id"]),))
+                conn.commit()
+                log.info("Re-activated user %s for domain %s", row["id"], domain)
             return row["id"]
     finally:
         conn.close()
