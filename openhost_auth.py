@@ -56,7 +56,7 @@ if not DJANGO_SECRET_KEY:
         log.info("Read SECRET_KEY from plane.env (not in environment)")
     else:
         log.warning("SECRET_KEY not found in environment or plane.env")
-OWNER_EMAIL = "owner@openhost.local"
+OWNER_EMAIL = "owner@openhost.app"
 
 # File to persist known guest identities (domain -> public_key_pem)
 GUESTS_FILE = os.path.join(os.environ.get("OPENHOST_APP_DATA_DIR", "/app/data"), "openhost_guests.json")
@@ -80,100 +80,76 @@ def _save_guests(guests):
         json.dump(guests, f, indent=2)
 
 
+OWNER_PASSWORD = "OpenHost-Owner-2024!"
+
+
 def _setup_instance():
-    """Auto-setup Plane instance on first boot: create admin user + mark done."""
-    log.info("Instance setup: waiting for database and migrations...")
-    instance = None
+    """Auto-setup Plane instance on first boot via the admin sign-up API.
+
+    Waits for the API to be ready, then POSTs to the instance admin sign-up
+    endpoint which creates the user, profile, and instance admin records
+    properly through Plane's own code.
+    """
+    log.info("Instance setup: waiting for API to be ready...")
+
+    # First wait for the database and migrations
     for attempt in range(600):
         try:
             conn = _db()
             cur = conn.cursor()
-            cur.execute("SELECT id, is_setup_done FROM instances LIMIT 1")
-            instance = cur.fetchone()
+            cur.execute("SELECT is_setup_done FROM instances LIMIT 1")
+            row = cur.fetchone()
             conn.close()
-            if instance:
-                log.info("Instance setup: found instance record after %d seconds", attempt)
+            if row:
+                if row["is_setup_done"]:
+                    log.info("Instance already set up, skipping")
+                    return
+                log.info("Instance setup: DB ready after %d seconds", attempt)
                 break
         except Exception as e:
             if attempt % 10 == 0:
                 log.info("Instance setup: waiting for database... (%ds, %s)", attempt, e)
-            pass
         time.sleep(1)
-
-    if not instance:
+    else:
         log.error("Instance setup: timed out waiting for database after 600s")
         return
 
-    if instance["is_setup_done"]:
-        log.info("Instance already set up, skipping auto-setup")
+    # Now wait for the API server to be ready
+    api_url = "http://127.0.0.1:3004"
+    for attempt in range(120):
+        try:
+            resp = requests.get(f"{api_url}/api/instances/", timeout=5)
+            if resp.status_code == 200:
+                log.info("Instance setup: API ready after %d seconds", attempt)
+                break
+        except Exception:
+            pass
+        time.sleep(1)
+    else:
+        log.error("Instance setup: timed out waiting for API")
         return
 
-    instance_id = instance["id"]
-    now = datetime.now(timezone.utc)
-    conn = _db()
+    # Sign up the admin user via Plane's own endpoint
     try:
-        cur = conn.cursor()
-
-        # Create or find owner user
-        cur.execute("SELECT id FROM users WHERE email = %s", (OWNER_EMAIL,))
-        existing = cur.fetchone()
-        if existing:
-            user_id = existing["id"]
+        resp = requests.post(
+            f"{api_url}/api/instances/admins/sign-up/",
+            data={
+                "email": OWNER_EMAIL,
+                "password": OWNER_PASSWORD,
+                "first_name": "Owner",
+                "last_name": "",
+                "company_name": "OpenHost",
+                "is_telemetry_enabled": False,
+            },
+            allow_redirects=False,
+            timeout=30,
+        )
+        if resp.status_code in (200, 301, 302):
+            log.info("Instance auto-setup complete via admin sign-up API")
         else:
-            user_id = uuid.uuid4()
-            cur.execute(
-                """INSERT INTO users (
-                    id, created_at, updated_at,
-                    password, last_login,
-                    is_superuser, username, first_name, last_name,
-                    email, is_staff, is_active, date_joined,
-                    is_managed, is_password_autoset, is_email_verified,
-                    is_password_expired, is_bot, display_name,
-                    avatar, is_email_valid,
-                    last_location, created_location, token,
-                    user_timezone, last_login_ip, last_logout_ip,
-                    last_login_medium, last_login_uagent
-                ) VALUES (
-                    %s, %s, %s,
-                    '', NULL,
-                    true, %s, 'Owner', '',
-                    %s, true, true, %s,
-                    false, true, true,
-                    false, false, 'Owner',
-                    '', true,
-                    '', '', '',
-                    'UTC', '', '',
-                    '', ''
-                )""",
-                (str(user_id), now, now, "owner", OWNER_EMAIL, now),
-            )
-
-        # Create instance admin
-        cur.execute(
-            "SELECT id FROM instance_admins WHERE user_id = %s",
-            (str(user_id),),
-        )
-        if not cur.fetchone():
-            cur.execute(
-                """INSERT INTO instance_admins
-                   (id, created_at, updated_at, role, is_verified, user_id, instance_id)
-                   VALUES (%s, %s, %s, 20, true, %s, %s)""",
-                (str(uuid.uuid4()), now, now, str(user_id), str(instance_id)),
-            )
-
-        # Mark instance setup as done
-        cur.execute(
-            "UPDATE instances SET is_setup_done = true, is_signup_screen_visited = true WHERE id = %s",
-            (str(instance_id),),
-        )
-
-        conn.commit()
-        log.info("Instance auto-setup complete: admin user %s", user_id)
+            log.error("Instance setup failed: %s %s", resp.status_code, resp.text[:200])
     except Exception as e:
         log.error("Instance setup failed: %s", e)
-        conn.rollback()
-    finally:
-        conn.close()
 
 
 def _is_owner(req):
