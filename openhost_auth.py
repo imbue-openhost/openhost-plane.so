@@ -515,6 +515,18 @@ def callback():
     return resp
 
 
+@app.route("/healthz")
+def healthz():
+    """Health check: returns 200 only when the API is ready and setup is done."""
+    try:
+        resp = requests.get("http://127.0.0.1:3004/api/instances/", timeout=5)
+        if resp.status_code == 200:
+            return Response("ok", status=200)
+        return Response("api not ready", status=503)
+    except Exception:
+        return Response("api not reachable", status=503)
+
+
 @app.route("/check-session")
 def check_session():
     """Forward-auth endpoint: auto-login zone owner into Plane."""

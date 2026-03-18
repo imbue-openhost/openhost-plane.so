@@ -9,6 +9,7 @@ port = 8080
 
 [routing]
 public_paths = ["/"]
+health_check = "/openhost-auth/healthz"
 
 [resources]
 memory_mb = 2048
