@@ -270,8 +270,9 @@ def _ensure_workspace_member(user_id):
         else:
             now = datetime.now(timezone.utc)
             cur.execute(
-                """INSERT INTO workspace_members (id, created_at, updated_at, role, member_id, workspace_id, is_active)
-                   VALUES (%s, %s, %s, 15, %s, %s, true)""",
+                """INSERT INTO workspace_members
+                   (id, created_at, updated_at, role, member_id, workspace_id, is_active, view_props, default_props, issue_props)
+                   VALUES (%s, %s, %s, 15, %s, %s, true, '{}', '{}', '{}')""",
                 (str(uuid.uuid4()), now, now, str(user_id), str(ws["id"])),
             )
             conn.commit()
