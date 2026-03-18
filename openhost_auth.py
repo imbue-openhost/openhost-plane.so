@@ -230,6 +230,12 @@ def _find_or_create_plane_user(domain):
             )""",
             (str(user_id), now, now, username, domain, email, now, domain),
         )
+        # Create profile record (required for Plane to fully recognize the user)
+        cur.execute(
+            """INSERT INTO profiles (id, created_at, updated_at, user_id, is_onboarded, is_tour_completed)
+               VALUES (%s, %s, %s, %s, true, true)""",
+            (str(uuid.uuid4()), now, now, str(user_id)),
+        )
         conn.commit()
         log.info("Created Plane user %s for domain %s", user_id, domain)
         return user_id
@@ -466,8 +472,12 @@ def check_session():
     is_owner = _is_owner(request)
     log.info("check-session: is_owner=%s, has_session=%s", is_owner, bool(existing_session))
 
-    # Check if this is the zone owner
+    # Not the owner and no valid session — redirect to OpenHost identity login
     if not is_owner:
+        original_uri = request.headers.get("X-Forwarded-Uri", "/")
+        # Don't redirect API calls or static assets — only page navigations
+        if not original_uri.startswith(("/api/", "/_next/", "/static/")):
+            return redirect("/openhost-auth/login")
         return Response("ok", status=200)
 
     # Owner without valid session — create one
