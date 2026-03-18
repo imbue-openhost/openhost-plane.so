@@ -6,6 +6,8 @@
 }
 
 :8080 {
+    encode gzip zstd
+
     request_body {
         max_size {$FILE_SIZE_LIMIT:5242880}
     }
