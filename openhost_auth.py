@@ -470,13 +470,15 @@ def check_session():
         log.info("check-session: stale session cookie, will re-create")
 
     is_owner = _is_owner(request)
-    log.info("check-session: is_owner=%s, has_session=%s", is_owner, bool(existing_session))
+    original_uri = request.headers.get("X-Forwarded-Uri", "/")
+    log.info("check-session: is_owner=%s, has_session=%s, uri=%s", is_owner, bool(existing_session), original_uri)
 
     # Not the owner and no valid session — redirect to OpenHost identity login
     if not is_owner:
-        original_uri = request.headers.get("X-Forwarded-Uri", "/")
-        # Don't redirect API calls or static assets — only page navigations
-        if not original_uri.startswith(("/api/", "/_next/", "/static/")):
+        # Only redirect browser page navigations (Accept: text/html), not
+        # API calls, asset requests, or health checks
+        accept = request.headers.get("Accept", "")
+        if "text/html" in accept:
             return redirect("/openhost-auth/login")
         return Response("ok", status=200)
 
