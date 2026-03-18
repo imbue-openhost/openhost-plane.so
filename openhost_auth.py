@@ -200,42 +200,55 @@ def _find_or_create_plane_user(domain):
         row = cur.fetchone()
         if row:
             return row["id"]
+    finally:
+        conn.close()
 
-        # Create user in Plane's users table
-        user_id = uuid.uuid4()
-        now = datetime.now(timezone.utc)
-        cur.execute(
-            """INSERT INTO users (
-                id, created_at, updated_at,
-                password, last_login,
-                is_superuser, username, first_name, last_name,
-                email, is_staff, is_active, date_joined,
-                is_managed, is_password_autoset, is_email_verified,
-                is_password_expired, is_bot, display_name,
-                avatar, is_email_valid,
-                last_location, created_location, token,
-                user_timezone, last_login_ip, last_logout_ip,
-                last_login_medium, last_login_uagent
-            ) VALUES (
-                %s, %s, %s,
-                '', NULL,
-                false, %s, %s, '',
-                %s, false, true, %s,
-                false, true, true,
-                false, false, %s,
-                '', true,
-                '', '', '',
-                'UTC', '', '',
-                '', ''
-            )""",
-            (str(user_id), now, now, username, domain, email, now, domain),
-        )
-        # Create profile record (required for Plane to fully recognize the user)
-        cur.execute(
-            """INSERT INTO profiles (id, created_at, updated_at, user_id, is_onboarded, is_tour_completed)
-               VALUES (%s, %s, %s, %s, true, true)""",
-            (str(uuid.uuid4()), now, now, str(user_id)),
-        )
+    # Create user via Plane's sign-up API (creates user + profile + triggers signals)
+    api_url = "http://127.0.0.1:3004"
+    session = requests.Session()
+    session.get(f"{api_url}/auth/get-csrf-token/", timeout=5)
+    csrf_token = session.cookies.get("csrftoken", "")
+
+    # Generate a random password (guest won't use it — they auth via identity tokens)
+    guest_password = secrets.token_urlsafe(32) + "!Aa1"
+
+    resp = session.post(
+        f"{api_url}/auth/sign-up/",
+        data={"email": email, "password": guest_password},
+        headers={"X-CSRFToken": csrf_token, "Referer": f"{api_url}/"},
+        allow_redirects=False,
+        timeout=30,
+    )
+    log.info("Sign-up API for %s: status %s", email, resp.status_code)
+
+    # Fetch the created user ID
+    conn = _db()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT id FROM users WHERE email = %s", (email,))
+        row = cur.fetchone()
+        if not row:
+            log.error("User %s not found after sign-up API call", email)
+            return None
+        user_id = row["id"]
+
+        # Update display name
+        cur.execute("UPDATE users SET display_name = %s, first_name = %s WHERE id = %s",
+                    (domain, domain, str(user_id)))
+
+        # Add to first workspace as a member (role 15 = member)
+        cur.execute("SELECT id FROM workspaces LIMIT 1")
+        ws = cur.fetchone()
+        if ws:
+            cur.execute(
+                """INSERT INTO workspace_members (id, created_at, updated_at, role, member_id, workspace_id, is_active)
+                   VALUES (%s, %s, %s, 15, %s, %s, true)
+                   ON CONFLICT DO NOTHING""",
+                (str(uuid.uuid4()), datetime.now(timezone.utc), datetime.now(timezone.utc),
+                 str(user_id), str(ws["id"])),
+            )
+            log.info("Added %s to workspace %s", domain, ws["id"])
+
         conn.commit()
         log.info("Created Plane user %s for domain %s", user_id, domain)
         return user_id
@@ -358,6 +371,23 @@ def remove_user():
     domain = request.form.get("domain", "").strip().lower()
     guests = _load_guests()
     if domain in guests:
+        guest_info = guests[domain]
+        plane_user_id = guest_info.get("plane_user_id")
+
+        # Remove from workspace and deactivate via DB
+        if plane_user_id:
+            try:
+                conn = _db()
+                cur = conn.cursor()
+                cur.execute("DELETE FROM workspace_members WHERE member_id = %s", (plane_user_id,))
+                cur.execute("DELETE FROM sessions WHERE user_id = %s", (plane_user_id,))
+                cur.execute("UPDATE users SET is_active = false WHERE id = %s", (plane_user_id,))
+                conn.commit()
+                conn.close()
+                log.info("Removed guest %s from workspaces and deactivated", domain)
+            except Exception as e:
+                log.error("Error removing guest %s: %s", domain, e)
+
         del guests[domain]
         _save_guests(guests)
     return redirect("/openhost-auth/manage")
