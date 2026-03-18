@@ -150,10 +150,21 @@ def _setup_instance():
             allow_redirects=False,
             timeout=30,
         )
-        if resp.status_code in (200, 301, 302):
-            log.info("Instance auto-setup complete via admin sign-up API")
-        else:
-            log.error("Instance setup failed: %s %s", resp.status_code, resp.text[:200])
+        redirect_url = resp.headers.get("Location", "")
+        log.info("Instance setup: sign-up response %s -> %s", resp.status_code, redirect_url)
+
+        # Verify the user was actually created
+        conn = _db()
+        try:
+            cur = conn.cursor()
+            cur.execute("SELECT id FROM users WHERE email = %s", (OWNER_EMAIL,))
+            if cur.fetchone():
+                log.info("Instance auto-setup complete: owner user created")
+            else:
+                log.error("Instance setup: sign-up API returned %s but user not created. Redirect: %s",
+                          resp.status_code, redirect_url)
+        finally:
+            conn.close()
     except Exception as e:
         log.error("Instance setup failed: %s", e)
 
