@@ -455,16 +455,26 @@ def check_session():
     existing_session = request.cookies.get("session-id")
     if existing_session:
         try:
+            from django.core import signing
             conn = _db()
             cur = conn.cursor()
             cur.execute(
-                "SELECT 1 FROM sessions WHERE session_key = %s AND expire_date > NOW()",
+                "SELECT session_data FROM sessions WHERE session_key = %s AND expire_date > NOW()",
                 (existing_session,),
             )
-            if cur.fetchone():
+            row = cur.fetchone()
+            conn.close()
+            if row:
+                # Verify the session can actually be decoded with the current SECRET_KEY
+                signing.loads(
+                    row["session_data"], key=DJANGO_SECRET_KEY,
+                    salt="django.contrib.sessions.SessionStore",
+                    serializer=signing.JSONSerializer,
+                )
                 log.info("check-session: valid existing session")
                 return Response("ok", status=200)
-            conn.close()
+        except signing.BadSignature:
+            log.info("check-session: session signed with old SECRET_KEY, will re-create")
         except Exception as e:
             log.warning("check-session: error validating session: %s", e)
         log.info("check-session: stale session cookie, will re-create")

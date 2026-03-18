@@ -6,13 +6,22 @@ PG_DATA="$DATA_DIR/postgres"
 MINIO_DATA="$DATA_DIR/minio"
 MINIO_BUCKET="plane-uploads"
 
-# Generate a secret key if not already set
+# Persist secret keys in the data directory so they survive restarts
+SECRET_KEYS_FILE="$DATA_DIR/.secret_keys"
+if [ -f "$SECRET_KEYS_FILE" ]; then
+    source "$SECRET_KEYS_FILE"
+fi
 if [ -z "$SECRET_KEY" ]; then
     SECRET_KEY=$(uuidgen | tr -d '-')
 fi
 if [ -z "$LIVE_SERVER_SECRET_KEY" ]; then
     LIVE_SERVER_SECRET_KEY=$(uuidgen | tr -d '-')
 fi
+# Save for next boot
+cat > "$SECRET_KEYS_FILE" << EOF
+SECRET_KEY=$SECRET_KEY
+LIVE_SERVER_SECRET_KEY=$LIVE_SERVER_SECRET_KEY
+EOF
 
 # --- Initialize PostgreSQL if needed ---
 if [ ! -f "$PG_DATA/PG_VERSION" ]; then
