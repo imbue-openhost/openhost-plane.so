@@ -44,7 +44,7 @@ DJANGO_SECRET_KEY = os.environ.get("SECRET_KEY", "")
 OWNER_EMAIL = "owner@openhost.local"
 
 # File to persist known guest identities (domain -> public_key_pem)
-GUESTS_FILE = "/app/data/openhost_guests.json"
+GUESTS_FILE = os.path.join(os.environ.get("OPENHOST_APP_DATA_DIR", "/app/data"), "openhost_guests.json")
 
 
 def _db():
@@ -67,8 +67,9 @@ def _save_guests(guests):
 
 def _setup_instance():
     """Auto-setup Plane instance on first boot: create admin user + mark done."""
+    log.info("Instance setup: waiting for database and migrations...")
     instance = None
-    for _ in range(600):
+    for attempt in range(600):
         try:
             conn = _db()
             cur = conn.cursor()
@@ -76,13 +77,16 @@ def _setup_instance():
             instance = cur.fetchone()
             conn.close()
             if instance:
+                log.info("Instance setup: found instance record after %d seconds", attempt)
                 break
-        except Exception:
+        except Exception as e:
+            if attempt % 10 == 0:
+                log.info("Instance setup: waiting for database... (%ds, %s)", attempt, e)
             pass
         time.sleep(1)
 
     if not instance:
-        log.error("Instance setup: timed out waiting for database")
+        log.error("Instance setup: timed out waiting for database after 600s")
         return
 
     if instance["is_setup_done"]:

@@ -1,8 +1,9 @@
 #!/bin/bash
 set -e
 
-PG_DATA="/app/data/postgres"
-MINIO_DATA="/app/data/minio"
+DATA_DIR="${OPENHOST_APP_DATA_DIR:-/app/data}"
+PG_DATA="$DATA_DIR/postgres"
+MINIO_DATA="$DATA_DIR/minio"
 MINIO_BUCKET="plane-uploads"
 
 # Generate a secret key if not already set
@@ -27,6 +28,11 @@ if [ ! -f "$PG_DATA/PG_VERSION" ]; then
     su postgres -c "pg_ctl -D $PG_DATA stop -w"
     echo "PostgreSQL initialized."
 fi
+
+# --- Ensure data directories exist with correct ownership ---
+mkdir -p "$DATA_DIR/postgres" "$DATA_DIR/redis" "$DATA_DIR/rabbitmq" "$DATA_DIR/minio"
+chown -R postgres:postgres "$DATA_DIR/postgres"
+chown -R rabbitmq:rabbitmq "$DATA_DIR/rabbitmq"
 
 # --- Ensure MinIO bucket directory exists ---
 mkdir -p "$MINIO_DATA/$MINIO_BUCKET"
@@ -87,6 +93,7 @@ echo "Environment configured."
 # Export all env vars for supervisor child processes
 set -a
 source /app/plane.env
+export DATA_DIR
 set +a
 
 # --- Launch all services via supervisor ---

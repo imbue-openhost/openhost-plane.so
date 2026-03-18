@@ -75,14 +75,11 @@ COPY plane.env /app/plane.env
 COPY openhost_auth.py /app/openhost_auth.py
 
 # Directories and permissions
-RUN mkdir -p /app/logs/access /app/logs/error \
-    /app/data/postgres /app/data/redis /app/data/rabbitmq /app/data/minio && \
+RUN mkdir -p /app/logs/access /app/logs/error && \
     chmod +x /app/start.sh && \
     mkdir -p /run/postgresql && \
-    chown -R postgres:postgres /app/data/postgres /run/postgresql && \
-    chown -R rabbitmq:rabbitmq /app/data/rabbitmq /app/logs/access /app/logs/error
-
-VOLUME ["/app/data", "/app/logs"]
+    chown -R postgres:postgres /run/postgresql && \
+    chown -R rabbitmq:rabbitmq /app/logs/access /app/logs/error
 
 EXPOSE 8080
 

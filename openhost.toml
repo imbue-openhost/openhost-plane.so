@@ -8,7 +8,6 @@ image = "Dockerfile"
 port = 8080
 
 [routing]
-base_path = "/plane"
 public_paths = ["/"]
 
 [resources]
