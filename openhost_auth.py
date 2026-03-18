@@ -261,7 +261,9 @@ def _create_django_session(user_id):
     Returns (session_key, expiry_datetime).
     Plane uses Django's db-backed sessions (django_session table).
     """
-    session_key = secrets.token_hex(16)
+    # Plane uses 128-char lowercase alphanumeric session keys
+    import string
+    session_key = ''.join(secrets.choice(string.ascii_lowercase + string.digits) for _ in range(128))
     expire_date = datetime.now(timezone.utc) + timedelta(days=14)
 
     # Use Django's signing module to create a properly encoded session
@@ -295,7 +297,7 @@ def _create_django_session(user_id):
     encoded = signing.dumps(
         session_data,
         key=DJANGO_SECRET_KEY,
-        salt="django.contrib.sessions.backends.db",
+        salt="django.contrib.sessions.SessionStore",
         serializer=signing.JSONSerializer,
     )
 
@@ -303,11 +305,11 @@ def _create_django_session(user_id):
     try:
         cur = conn.cursor()
         cur.execute(
-            """INSERT INTO django_session (session_key, session_data, expire_date)
-               VALUES (%s, %s, %s)
+            """INSERT INTO sessions (session_key, session_data, expire_date, user_id, device_info)
+               VALUES (%s, %s, %s, %s, NULL)
                ON CONFLICT (session_key) DO UPDATE
                SET session_data = EXCLUDED.session_data, expire_date = EXCLUDED.expire_date""",
-            (session_key, encoded, expire_date),
+            (session_key, encoded, expire_date, str(user_id)),
         )
         conn.commit()
         return session_key, expire_date
@@ -447,7 +449,7 @@ def callback():
     # Set the Django session cookie and redirect to Plane
     resp = redirect(f"{EXTERNAL_URL}/")
     resp.set_cookie(
-        "sessionid",
+        "session-id",
         session_key,
         expires=expire_date,
         path="/",
@@ -462,13 +464,13 @@ def callback():
 def check_session():
     """Forward-auth endpoint: auto-login zone owner into Plane."""
     # Fast path: already has a valid Plane session
-    existing_session = request.cookies.get("sessionid")
+    existing_session = request.cookies.get("session-id")
     if existing_session:
         try:
             conn = _db()
             cur = conn.cursor()
             cur.execute(
-                "SELECT 1 FROM django_session WHERE session_key = %s AND expire_date > NOW()",
+                "SELECT 1 FROM sessions WHERE session_key = %s AND expire_date > NOW()",
                 (existing_session,),
             )
             if cur.fetchone():
@@ -507,7 +509,7 @@ def check_session():
     original_uri = request.headers.get("X-Forwarded-Uri", "/")
     resp = redirect(original_uri)
     resp.set_cookie(
-        "sessionid", session_key,
+        "session-id", session_key,
         expires=expire_date, path="/",
         httponly=True, samesite="Lax",
     )
