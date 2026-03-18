@@ -9,6 +9,16 @@ Plane.so all-in-one container for OpenHost. Bundles everything into a single Doc
 - Supervisor (process manager)
 - OpenHost federated identity auth proxy
 
+## TODO
+
+- the openhost auth stuff is still pretty janky. eg it'll spit out errors for ~2 mins on first boot until plane migrates itself or something
+- plane 1.0 has migrated to a flask+vite frontend
+- it's pretty slow to initially load - maybe then 10+MB of content?
+- guest users need manually upgraded in permissions to eg delete tasks, on both the workspace and the project
+- the CE has more annoying limitations other than auth
+  - no bulk select / delete ops
+- basic backup functionality was added (snapshot every hour to permanent data dir), but it hasn't been verified that it works properly + can be restored from.
+
 ## How it works
 
 ### Auto-setup
