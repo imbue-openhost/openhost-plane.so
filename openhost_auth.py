@@ -253,11 +253,30 @@ def _create_django_session(user_id):
 
     # Use Django's signing module to create a properly encoded session
     from django.core import signing
+    from django.utils.crypto import salted_hmac
+
+    # Compute _auth_user_hash the same way Django does
+    # (AbstractBaseUser.get_session_auth_hash). We need the user's password
+    # field value to compute this.
+    conn_pw = _db()
+    try:
+        cur_pw = conn_pw.cursor()
+        cur_pw.execute("SELECT password FROM users WHERE id = %s", (str(user_id),))
+        password = cur_pw.fetchone()["password"] or ""
+    finally:
+        conn_pw.close()
+
+    auth_hash = salted_hmac(
+        "django.contrib.auth.models.AbstractBaseUser.get_session_auth_hash",
+        password,
+        secret=DJANGO_SECRET_KEY,
+        algorithm="sha256",
+    ).hexdigest()
 
     session_data = {
         "_auth_user_id": str(user_id),
         "_auth_user_backend": "django.contrib.auth.backends.ModelBackend",
-        "_auth_user_hash": "",
+        "_auth_user_hash": auth_hash,
     }
 
     encoded = signing.dumps(
