@@ -131,7 +131,12 @@ def _setup_instance():
 
     # Sign up the admin user via Plane's own endpoint
     try:
-        resp = requests.post(
+        session = requests.Session()
+        # Get CSRF token first (required by Django's CSRF middleware)
+        session.get(f"{api_url}/auth/get-csrf-token/", timeout=5)
+        csrf_token = session.cookies.get("csrftoken", "")
+
+        resp = session.post(
             f"{api_url}/api/instances/admins/sign-up/",
             data={
                 "email": OWNER_EMAIL,
@@ -141,6 +146,7 @@ def _setup_instance():
                 "company_name": "OpenHost",
                 "is_telemetry_enabled": False,
             },
+            headers={"X-CSRFToken": csrf_token, "Referer": f"{api_url}/"},
             allow_redirects=False,
             timeout=30,
         )
