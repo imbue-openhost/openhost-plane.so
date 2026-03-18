@@ -162,26 +162,13 @@ def _setup_instance():
 
 
 def _is_owner(req):
-    """Check if the request is from the zone owner (has valid zone_auth cookie).
+    """Check if the request is from the zone owner.
 
-    We verify by asking the router, which owns the zone_auth JWT keys.
+    The OpenHost router sets X-OpenHost-Is-Owner: true for authenticated
+    owner requests. The header is always overwritten by the router so it
+    cannot be spoofed by external clients.
     """
-    zone_auth = req.cookies.get("zone_auth")
-    if not zone_auth:
-        return False
-    try:
-        resp = requests.get(
-            f"{ROUTER_URL}/.well-known/jwks.json", timeout=5
-        )
-        jwks = resp.json()
-        # Build public key from JWKS
-        from jwt.algorithms import RSAAlgorithm
-        key = RSAAlgorithm.from_jwk(json.dumps(jwks["keys"][0]))
-        claims = jwt.decode(zone_auth, key, algorithms=["RS256"])
-        return claims.get("sub") == "owner"
-    except Exception as e:
-        log.warning("Owner auth check failed: %s", e)
-        return False
+    return req.headers.get("X-OpenHost-Is-Owner") == "true"
 
 
 def _fetch_identity(domain):
