@@ -240,23 +240,42 @@ def _find_or_create_plane_user(domain):
         # Update display name
         cur.execute("UPDATE users SET display_name = %s, first_name = %s WHERE id = %s",
                     (domain, domain, str(user_id)))
-
-        # Add to first workspace as a member (role 15 = member)
-        cur.execute("SELECT id FROM workspaces LIMIT 1")
-        ws = cur.fetchone()
-        if ws:
-            cur.execute(
-                """INSERT INTO workspace_members (id, created_at, updated_at, role, member_id, workspace_id, is_active)
-                   VALUES (%s, %s, %s, 15, %s, %s, true)
-                   ON CONFLICT DO NOTHING""",
-                (str(uuid.uuid4()), datetime.now(timezone.utc), datetime.now(timezone.utc),
-                 str(user_id), str(ws["id"])),
-            )
-            log.info("Added %s to workspace %s", domain, ws["id"])
-
         conn.commit()
         log.info("Created Plane user %s for domain %s", user_id, domain)
         return user_id
+    finally:
+        conn.close()
+
+
+def _ensure_workspace_member(user_id):
+    """Add a user to the first workspace if not already a member."""
+    conn = _db()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT id FROM workspaces LIMIT 1")
+        ws = cur.fetchone()
+        if not ws:
+            return
+        # Check if already a member (may have been deactivated)
+        cur.execute(
+            "SELECT id, is_active FROM workspace_members WHERE member_id = %s AND workspace_id = %s",
+            (str(user_id), str(ws["id"])),
+        )
+        existing = cur.fetchone()
+        if existing:
+            if not existing["is_active"]:
+                cur.execute("UPDATE workspace_members SET is_active = true WHERE id = %s", (str(existing["id"]),))
+                conn.commit()
+                log.info("Re-activated workspace membership for user %s", user_id)
+        else:
+            now = datetime.now(timezone.utc)
+            cur.execute(
+                """INSERT INTO workspace_members (id, created_at, updated_at, role, member_id, workspace_id, is_active)
+                   VALUES (%s, %s, %s, 15, %s, %s, true)""",
+                (str(uuid.uuid4()), now, now, str(user_id), str(ws["id"])),
+            )
+            conn.commit()
+            log.info("Added user %s to workspace %s", user_id, ws["id"])
     finally:
         conn.close()
 
@@ -351,8 +370,9 @@ def add_user():
     if not identity:
         return Response(f"Could not fetch identity from {domain}", status=400)
 
-    # Create Plane account
+    # Create Plane account and add to workspace
     user_id = _find_or_create_plane_user(domain)
+    _ensure_workspace_member(user_id)
 
     # Store guest identity
     guests = _load_guests()
