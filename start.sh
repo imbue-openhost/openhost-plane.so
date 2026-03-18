@@ -55,8 +55,12 @@ else
     DOMAIN_NAME="${DOMAIN_NAME:-localhost}"
 fi
 
-# Protocol: the router handles TLS, so internal is http
-APP_PROTOCOL="${APP_PROTOCOL:-http}"
+# Protocol: use https when behind the OpenHost router (which handles TLS)
+if [ -n "$OPENHOST_ZONE_DOMAIN" ]; then
+    APP_PROTOCOL="${APP_PROTOCOL:-https}"
+else
+    APP_PROTOCOL="${APP_PROTOCOL:-http}"
+fi
 WEB_URL="${APP_PROTOCOL}://${DOMAIN_NAME}"
 
 # --- Write plane.env ---
