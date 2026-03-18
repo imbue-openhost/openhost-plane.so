@@ -429,15 +429,28 @@ def callback():
 @app.route("/check-session")
 def check_session():
     """Forward-auth endpoint: auto-login zone owner into Plane."""
-    # Fast path: already has a Plane session
-    if request.cookies.get("sessionid"):
-        return Response("ok", status=200)
+    # Fast path: already has a valid Plane session
+    existing_session = request.cookies.get("sessionid")
+    if existing_session:
+        try:
+            conn = _db()
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT 1 FROM django_session WHERE session_key = %s AND expire_date > NOW()",
+                (existing_session,),
+            )
+            if cur.fetchone():
+                return Response("ok", status=200)
+            conn.close()
+        except Exception:
+            pass
+        # Stale cookie — fall through to re-create session
 
     # Check if this is the zone owner
     if not _is_owner(request):
         return Response("ok", status=200)
 
-    # Owner without session — create one
+    # Owner without valid session — create one
     conn = _db()
     try:
         cur = conn.cursor()
