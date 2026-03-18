@@ -82,7 +82,7 @@ AMQP_URL=amqp://guest:guest@127.0.0.1:5672/
 
 # Web URLs
 WEB_URL=${WEB_URL}
-CORS_ALLOWED_ORIGINS=${WEB_URL}
+CORS_ALLOWED_ORIGINS=${WEB_URL},http://127.0.0.1:3004
 
 # MinIO (local S3-compatible storage)
 USE_MINIO=1
