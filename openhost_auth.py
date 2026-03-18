@@ -440,14 +440,18 @@ def check_session():
                 (existing_session,),
             )
             if cur.fetchone():
+                log.info("check-session: valid existing session")
                 return Response("ok", status=200)
             conn.close()
-        except Exception:
-            pass
-        # Stale cookie — fall through to re-create session
+        except Exception as e:
+            log.warning("check-session: error validating session: %s", e)
+        log.info("check-session: stale session cookie, will re-create")
+
+    is_owner = _is_owner(request)
+    log.info("check-session: is_owner=%s, has_session=%s", is_owner, bool(existing_session))
 
     # Check if this is the zone owner
-    if not _is_owner(request):
+    if not is_owner:
         return Response("ok", status=200)
 
     # Owner without valid session — create one
@@ -460,10 +464,12 @@ def check_session():
         conn.close()
 
     if not row:
+        log.warning("check-session: owner user %s not found in DB", OWNER_EMAIL)
         return Response("ok", status=200)
 
     user_id = row["id"]
     session_key, expire_date = _create_django_session(user_id)
+    log.info("check-session: created session for owner (user %s)", user_id)
 
     # Redirect back to the original URL with the new session cookie
     original_uri = request.headers.get("X-Forwarded-Uri", "/")
