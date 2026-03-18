@@ -42,7 +42,20 @@ ZONE_DOMAIN = os.environ.get("OPENHOST_ZONE_DOMAIN", "localhost")
 ROUTER_URL = os.environ.get("OPENHOST_ROUTER_URL", "http://127.0.0.1:8080")
 # The external URL guests use to reach this Plane instance
 EXTERNAL_URL = os.environ.get("WEB_URL", f"http://{ZONE_DOMAIN}")
+# Read SECRET_KEY from env (set by supervisord) or fall back to plane.env file
 DJANGO_SECRET_KEY = os.environ.get("SECRET_KEY", "")
+if not DJANGO_SECRET_KEY:
+    try:
+        for line in open("/app/plane.env"):
+            if line.startswith("SECRET_KEY="):
+                DJANGO_SECRET_KEY = line.strip().split("=", 1)[1]
+                break
+    except FileNotFoundError:
+        pass
+    if DJANGO_SECRET_KEY:
+        log.info("Read SECRET_KEY from plane.env (not in environment)")
+    else:
+        log.warning("SECRET_KEY not found in environment or plane.env")
 OWNER_EMAIL = "owner@openhost.local"
 
 # File to persist known guest identities (domain -> public_key_pem)
