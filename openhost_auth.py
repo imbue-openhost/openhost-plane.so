@@ -517,14 +517,10 @@ def callback():
 
 @app.route("/healthz")
 def healthz():
-    """Health check: returns 200 only when the API is ready and setup is done."""
-    try:
-        resp = requests.get("http://127.0.0.1:3004/api/instances/", timeout=5)
-        if resp.status_code == 200:
-            return Response("ok", status=200)
-        return Response("api not ready", status=503)
-    except Exception:
-        return Response("api not reachable", status=503)
+    """Health check: returns 200 immediately so the OpenHost router
+    marks the app as ready while migrations and services finish
+    starting in the background."""
+    return Response("ok", status=200)
 
 
 @app.route("/check-session")
