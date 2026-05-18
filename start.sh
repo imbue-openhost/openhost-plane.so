@@ -2,7 +2,7 @@
 set -e
 
 DATA_DIR="${OPENHOST_APP_DATA_DIR:-/app/data}"
-PG_DATA="$DATA_DIR/postgres"
+PG_DATA="/var/lib/postgresql/data"
 MINIO_DATA="$DATA_DIR/minio"
 MINIO_BUCKET="plane-uploads"
 
@@ -23,25 +23,34 @@ SECRET_KEY=$SECRET_KEY
 LIVE_SERVER_SECRET_KEY=$LIVE_SERVER_SECRET_KEY
 EOF
 
-# --- Initialize PostgreSQL if needed ---
-if [ ! -f "$PG_DATA/PG_VERSION" ]; then
-    echo "Initializing PostgreSQL database..."
-    su postgres -c "initdb -D $PG_DATA --encoding=UTF8 --locale=C"
-    # Allow local connections without password
-    echo "host all all 127.0.0.1/32 trust" >> "$PG_DATA/pg_hba.conf"
-    echo "local all all trust" >> "$PG_DATA/pg_hba.conf"
+# --- Initialize PostgreSQL ---
+# PG_DATA is container-local (not on the bind mount) so postgres can
+# chmod/chown freely. This avoids permission failures under rootless
+# podman with idmapped mounts. Data survives restarts via pg_dump
+# backups on the persistent mount (see pg-backup in supervisor.conf).
+mkdir -p "$PG_DATA"
+chown postgres:postgres "$PG_DATA"
 
-    # Start postgres temporarily to create the database
-    su postgres -c "pg_ctl -D $PG_DATA -l /tmp/pg_init.log start -w"
-    su postgres -c "createdb plane"
-    su postgres -c "pg_ctl -D $PG_DATA stop -w"
-    echo "PostgreSQL initialized."
+echo "Initializing PostgreSQL database..."
+su postgres -c "initdb -D $PG_DATA --encoding=UTF8 --locale=C"
+echo "host all all 127.0.0.1/32 trust" >> "$PG_DATA/pg_hba.conf"
+echo "local all all trust" >> "$PG_DATA/pg_hba.conf"
+
+su postgres -c "pg_ctl -D $PG_DATA -l /tmp/pg_init.log start -w"
+su postgres -c "createdb plane"
+
+# Restore from backup if one exists on the persistent mount
+if [ -f "$DATA_DIR/plane.sql.gz" ]; then
+    echo "Restoring database from backup..."
+    gunzip -c "$DATA_DIR/plane.sql.gz" | su postgres -c "psql -q plane" 2>/dev/null || true
+    echo "Database restored."
 fi
 
-# --- Ensure data directories exist with correct ownership ---
-mkdir -p "$DATA_DIR/postgres" "$DATA_DIR/redis" "$DATA_DIR/rabbitmq" "$DATA_DIR/minio"
-chown -R postgres:postgres "$DATA_DIR/postgres"
-chown -R rabbitmq:rabbitmq "$DATA_DIR/rabbitmq"
+su postgres -c "pg_ctl -D $PG_DATA stop -w"
+echo "PostgreSQL ready."
+
+# --- Ensure data directories exist ---
+mkdir -p "$DATA_DIR/redis" "$DATA_DIR/rabbitmq" "$DATA_DIR/minio"
 
 # --- Ensure MinIO bucket directory exists ---
 mkdir -p "$MINIO_DATA/$MINIO_BUCKET"
