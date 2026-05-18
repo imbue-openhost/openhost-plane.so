@@ -77,8 +77,8 @@ COPY openhost_auth.py /app/openhost_auth.py
 # Directories and permissions
 RUN mkdir -p /app/logs/access /app/logs/error && \
     chmod +x /app/start.sh && \
-    mkdir -p /run/postgresql && \
-    chown -R postgres:postgres /run/postgresql && \
+    mkdir -p /run/postgresql /var/lib/postgresql/data && \
+    chown -R postgres:postgres /run/postgresql /var/lib/postgresql && \
     chown -R rabbitmq:rabbitmq /app/logs/access /app/logs/error
 
 EXPOSE 8080
