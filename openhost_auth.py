@@ -676,5 +676,6 @@ LOGIN_TEMPLATE = """\
 
 
 if __name__ == "__main__":
-    _setup_instance()
+    import threading
+    threading.Thread(target=_setup_instance, daemon=True).start()
     app.run(host="0.0.0.0", port=3006)
