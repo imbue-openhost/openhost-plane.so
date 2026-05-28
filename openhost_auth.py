@@ -83,6 +83,63 @@ def _save_guests(guests):
 OWNER_PASSWORD = "OpenHost-Owner-2024!"
 
 
+WORKSPACE_NAME = os.environ.get("OPENHOST_OWNER_USERNAME", "Team").title()
+WORKSPACE_SLUG = WORKSPACE_NAME.lower().replace(" ", "-")
+
+
+def _wait_for_api():
+    """Wait for the database and API server to be ready. Returns api_url or None."""
+    for attempt in range(600):
+        try:
+            conn = _db()
+            cur = conn.cursor()
+            cur.execute("SELECT 1 FROM instances LIMIT 1")
+            conn.close()
+            if attempt > 0:
+                log.info("Instance setup: DB ready after %d seconds", attempt)
+            break
+        except Exception as e:
+            if attempt % 10 == 0:
+                log.info("Instance setup: waiting for database... (%ds, %s)", attempt, e)
+        time.sleep(1)
+    else:
+        log.error("Instance setup: timed out waiting for database after 600s")
+        return None
+
+    api_url = "http://127.0.0.1:3004"
+    for attempt in range(120):
+        try:
+            resp = requests.get(f"{api_url}/api/instances/", timeout=5)
+            if resp.status_code == 200:
+                if attempt > 0:
+                    log.info("Instance setup: API ready after %d seconds", attempt)
+                return api_url
+        except Exception:
+            pass
+        time.sleep(1)
+    log.error("Instance setup: timed out waiting for API")
+    return None
+
+
+def _get_user_session(api_url):
+    """Sign in as the owner user and return (session, csrf_token)."""
+    session = requests.Session()
+    session.get(f"{api_url}/auth/get-csrf-token/", timeout=5)
+    csrf_token = session.cookies.get("csrftoken", "")
+    resp = session.post(
+        f"{api_url}/auth/sign-in/",
+        data={"email": OWNER_EMAIL, "password": OWNER_PASSWORD, "medium": "email"},
+        headers={"X-CSRFToken": csrf_token, "Referer": f"{api_url}/"},
+        allow_redirects=False,
+        timeout=30,
+    )
+    if resp.status_code not in (200, 301, 302):
+        log.warning("Owner sign-in returned %s", resp.status_code)
+    # Refresh CSRF token after sign-in
+    csrf_token = session.cookies.get("csrftoken", csrf_token)
+    return session, csrf_token
+
+
 def _setup_instance():
     """Auto-setup Plane instance on first boot via the admin sign-up API.
 
@@ -90,49 +147,28 @@ def _setup_instance():
     endpoint which creates the user, profile, and instance admin records
     properly through Plane's own code.
     """
-    log.info("Instance setup: waiting for API to be ready...")
+    log.info("Instance setup: checking...")
 
-    # First wait for the database and migrations
-    for attempt in range(600):
-        try:
-            conn = _db()
-            cur = conn.cursor()
-            cur.execute("SELECT is_setup_done FROM instances LIMIT 1")
-            row = cur.fetchone()
-            conn.close()
-            if row:
-                if row["is_setup_done"]:
-                    log.info("Instance already set up, skipping")
-                    return
-                log.info("Instance setup: DB ready after %d seconds", attempt)
-                break
-        except Exception as e:
-            if attempt % 10 == 0:
-                log.info("Instance setup: waiting for database... (%ds, %s)", attempt, e)
-        time.sleep(1)
-    else:
-        log.error("Instance setup: timed out waiting for database after 600s")
+    api_url = _wait_for_api()
+    if not api_url:
         return
 
-    # Now wait for the API server to be ready
-    api_url = "http://127.0.0.1:3004"
-    for attempt in range(120):
-        try:
-            resp = requests.get(f"{api_url}/api/instances/", timeout=5)
-            if resp.status_code == 200:
-                log.info("Instance setup: API ready after %d seconds", attempt)
-                break
-        except Exception:
-            pass
-        time.sleep(1)
-    else:
-        log.error("Instance setup: timed out waiting for API")
+    # Check if instance admin is already created
+    conn = _db()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT is_setup_done FROM instances LIMIT 1")
+        row = cur.fetchone()
+    finally:
+        conn.close()
+
+    if row and row["is_setup_done"]:
+        log.info("Instance already set up, skipping admin sign-up")
         return
 
     # Sign up the admin user via Plane's own endpoint
     try:
         session = requests.Session()
-        # Get CSRF token first (required by Django's CSRF middleware)
         session.get(f"{api_url}/auth/get-csrf-token/", timeout=5)
         csrf_token = session.cookies.get("csrftoken", "")
 
@@ -141,19 +177,17 @@ def _setup_instance():
             data={
                 "email": OWNER_EMAIL,
                 "password": OWNER_PASSWORD,
-                "first_name": "Owner",
+                "first_name": WORKSPACE_NAME,
                 "last_name": "",
-                "company_name": "OpenHost",
+                "company_name": WORKSPACE_NAME,
                 "is_telemetry_enabled": False,
             },
             headers={"X-CSRFToken": csrf_token, "Referer": f"{api_url}/"},
             allow_redirects=False,
             timeout=30,
         )
-        redirect_url = resp.headers.get("Location", "")
-        log.info("Instance setup: sign-up response %s -> %s", resp.status_code, redirect_url)
+        log.info("Instance setup: sign-up response %s", resp.status_code)
 
-        # Verify the user was actually created
         conn = _db()
         try:
             cur = conn.cursor()
@@ -161,12 +195,82 @@ def _setup_instance():
             if cur.fetchone():
                 log.info("Instance auto-setup complete: owner user created")
             else:
-                log.error("Instance setup: sign-up API returned %s but user not created. Redirect: %s",
-                          resp.status_code, redirect_url)
+                log.error("Instance setup: sign-up API returned %s but user not created", resp.status_code)
         finally:
             conn.close()
     except Exception as e:
         log.error("Instance setup failed: %s", e)
+
+
+def _complete_onboarding():
+    """Complete Plane's onboarding (profile + workspace) so the owner skips the wizard."""
+    conn = _db()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT is_onboarded FROM profiles WHERE user_id = (SELECT id FROM users WHERE email = %s)",
+            (OWNER_EMAIL,),
+        )
+        row = cur.fetchone()
+        if row and row["is_onboarded"]:
+            log.info("Onboarding already complete, skipping")
+            return
+    except Exception:
+        pass
+    finally:
+        conn.close()
+
+    api_url = _wait_for_api()
+    if not api_url:
+        return
+
+    try:
+        session, csrf_token = _get_user_session(api_url)
+        headers = {"X-CSRFToken": csrf_token, "Referer": f"{api_url}/",
+                    "Content-Type": "application/json"}
+
+        # Step 1: complete profile
+        resp = session.patch(
+            f"{api_url}/api/users/me/",
+            json={"first_name": WORKSPACE_NAME, "last_name": "", "role": "admin",
+                  "is_onboarded": True},
+            headers=headers, timeout=10,
+        )
+        log.info("Onboarding profile update: %s", resp.status_code)
+
+        resp = session.patch(
+            f"{api_url}/api/users/me/profile/",
+            json={"role": "Executive", "use_case": "Engineering",
+                  "is_onboarded": True,
+                  "onboarding_step": {"profile_complete": True, "workspace_create": True,
+                                      "workspace_join": True, "workspace_invite": True}},
+            headers=headers, timeout=10,
+        )
+        log.info("Onboarding profile detail update: %s", resp.status_code)
+
+        # Step 2: create workspace (if none exists)
+        resp = session.get(f"{api_url}/api/users/me/workspaces/", headers=headers, timeout=10)
+        workspaces = resp.json() if resp.status_code == 200 else []
+        if not workspaces:
+            resp = session.post(
+                f"{api_url}/api/workspaces/",
+                json={"name": WORKSPACE_NAME, "slug": WORKSPACE_SLUG, "organization_size": "2-10"},
+                headers=headers, timeout=10,
+            )
+            log.info("Onboarding workspace creation: %s", resp.status_code)
+            if resp.status_code in (200, 201):
+                ws = resp.json()
+                session.patch(
+                    f"{api_url}/api/users/me/profile/",
+                    json={"last_workspace_id": ws["id"]},
+                    headers=headers, timeout=10,
+                )
+        else:
+            log.info("Onboarding: workspace already exists")
+
+        log.info("Onboarding complete")
+    except Exception as e:
+        log.error("Onboarding failed: %s", e)
 
 
 def _is_owner(req):
@@ -675,7 +779,12 @@ LOGIN_TEMPLATE = """\
 """
 
 
+def _background_setup():
+    _setup_instance()
+    _complete_onboarding()
+
+
 if __name__ == "__main__":
     import threading
-    threading.Thread(target=_setup_instance, daemon=True).start()
+    threading.Thread(target=_background_setup, daemon=True).start()
     app.run(host="0.0.0.0", port=3006)
