@@ -31,23 +31,27 @@ EOF
 mkdir -p "$PG_DATA"
 chown postgres:postgres "$PG_DATA"
 
-echo "Initializing PostgreSQL database..."
-su postgres -c "initdb -D $PG_DATA --encoding=UTF8 --locale=C"
-echo "host all all 127.0.0.1/32 trust" >> "$PG_DATA/pg_hba.conf"
-echo "local all all trust" >> "$PG_DATA/pg_hba.conf"
+if [ ! -f "$PG_DATA/PG_VERSION" ]; then
+    echo "Initializing PostgreSQL database..."
+    su postgres -c "initdb -D $PG_DATA --encoding=UTF8 --locale=C"
+    echo "host all all 127.0.0.1/32 trust" >> "$PG_DATA/pg_hba.conf"
+    echo "local all all trust" >> "$PG_DATA/pg_hba.conf"
 
-su postgres -c "pg_ctl -D $PG_DATA -l /tmp/pg_init.log start -w"
-su postgres -c "createdb plane"
+    su postgres -c "pg_ctl -D $PG_DATA -l /tmp/pg_init.log start -w"
+    su postgres -c "createdb plane"
 
-# Restore from backup if one exists on the persistent mount
-if [ -f "$DATA_DIR/plane.sql.gz" ]; then
-    echo "Restoring database from backup..."
-    gunzip -c "$DATA_DIR/plane.sql.gz" | su postgres -c "psql -q plane" 2>/dev/null || true
-    echo "Database restored."
+    # Restore from backup if one exists on the persistent mount
+    if [ -f "$DATA_DIR/plane.sql.gz" ]; then
+        echo "Restoring database from backup..."
+        gunzip -c "$DATA_DIR/plane.sql.gz" | su postgres -c "psql -q plane" 2>/dev/null || true
+        echo "Database restored."
+    fi
+
+    su postgres -c "pg_ctl -D $PG_DATA stop -w"
+    echo "PostgreSQL initialized."
+else
+    echo "PostgreSQL data directory already exists, skipping init."
 fi
-
-su postgres -c "pg_ctl -D $PG_DATA stop -w"
-echo "PostgreSQL ready."
 
 # --- Ensure data directories exist ---
 mkdir -p "$DATA_DIR/redis" "$DATA_DIR/rabbitmq" "$DATA_DIR/minio"
@@ -119,6 +123,9 @@ set -a
 source /app/plane.env
 export DATA_DIR
 set +a
+
+# --- Squash migrations for faster first boot ---
+cd /app/backend && python /app/squash_migrations.py
 
 # --- Launch all services via supervisor ---
 exec supervisord -c /app/supervisor.conf

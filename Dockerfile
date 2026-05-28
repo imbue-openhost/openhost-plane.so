@@ -73,6 +73,7 @@ COPY supervisor.conf /app/supervisor.conf
 COPY start.sh /app/start.sh
 COPY plane.env /app/plane.env
 COPY openhost_auth.py /app/openhost_auth.py
+COPY squash_migrations.py /app/squash_migrations.py
 
 # Directories and permissions
 RUN mkdir -p /app/logs/access /app/logs/error && \
